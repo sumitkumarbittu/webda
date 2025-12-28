@@ -1,0 +1,105 @@
+<script>
+(function () {
+
+  /* ------------------------------
+     CONFIG
+     ------------------------------ */
+  const API_ENDPOINT = "https://your-api.com/collect"; // unchanged
+  const analytics_HEARTBEAT_INTERVAL = 10_000; // 10 seconds
+
+  /* ------------------------------
+     VISITOR ID (cached per browser)
+     ------------------------------ */
+  function analytics_generateVisitorId() {
+    return (
+      "V" +
+      Date.now().toString(36).slice(-4).toUpperCase() +
+      Math.random().toString(36).slice(2, 6).toUpperCase()
+    );
+  }
+
+  let analytics_visitor_id = localStorage.getItem("visitor_id");
+  if (!analytics_visitor_id) {
+    analytics_visitor_id = analytics_generateVisitorId();
+    localStorage.setItem("visitor_id", analytics_visitor_id);
+  }
+
+  /* ------------------------------
+     SESSION START
+     ------------------------------ */
+  const analytics_session_started_at = new Date().toISOString();
+
+  /* ------------------------------
+     CURRENT URL
+     ------------------------------ */
+  function analytics_getCurrentUrl() {
+    return window.location.href;
+  }
+
+  /* ------------------------------
+     CITY (fetch once per session)
+     ------------------------------ */
+  let analytics_city = null;
+
+  (async function analytics_fetchCityOnce() {
+    try {
+      const res = await fetch("https://ipapi.co/json/", {
+        cache: "no-store",
+        mode: "cors"
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        analytics_city =
+          typeof data.city === "string" ? data.city : null;
+      }
+    } catch {
+      analytics_city = null; // VPN / ad blocker / network issue
+    }
+  })();
+
+  /* ------------------------------
+     HEARTBEAT LOOP
+     ------------------------------ */
+  setInterval(() => {
+    const analytics_payload = {
+      visitor_id: analytics_visitor_id,
+      city: analytics_city,
+      current_url: analytics_getCurrentUrl(),
+      session_started_at: analytics_session_started_at
+    };
+
+    fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(analytics_payload),
+      keepalive: true
+    }).catch(() => {
+      /* silent failure */
+    });
+
+  }, analytics_HEARTBEAT_INTERVAL);
+
+  /* ------------------------------
+     FINAL SEND ON PAGE EXIT
+     ------------------------------ */
+  window.addEventListener("pagehide", () => {
+    const analytics_payload = {
+      visitor_id: analytics_visitor_id,
+      city: analytics_city,
+      current_url: analytics_getCurrentUrl(),
+      session_started_at: analytics_session_started_at
+    };
+
+    navigator.sendBeacon(
+      API_ENDPOINT,
+      JSON.stringify(analytics_payload)
+    );
+  });
+
+})();
+</script>
+
+<!-- End of Analytics Script -->
