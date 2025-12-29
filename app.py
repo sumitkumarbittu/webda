@@ -26,6 +26,10 @@ FAILED_DRAINED: List[Dict[str, Any]] = []
 DB_INITIALIZED = False
 LAST_PROCESS_AT: Optional[datetime] = None
 
+
+def _truncate_to_minute(dt: datetime) -> datetime:
+    return dt.replace(second=0, microsecond=0)
+
 app = Flask(__name__)
 CORS(app)
 
@@ -164,6 +168,8 @@ def process_siteanalysis_queue():
 
     now = datetime.now(timezone.utc)
 
+    current_minute = _truncate_to_minute(now)
+
     # Only insert exactly at hh:mm:00
     if now.second != 0:
         next_allowed = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
@@ -183,27 +189,30 @@ def process_siteanalysis_queue():
             ),
             200,
         )
-    if LAST_PROCESS_AT is not None:
-        elapsed = (now - LAST_PROCESS_AT).total_seconds()
-        if elapsed < float(PROCESS_INTERVAL_SECONDS):
-            with EVENT_CONTAINER_LOCK:
-                container_size = len(EVENT_CONTAINER)
-            return (
-                jsonify(
-                    {
-                        "skipped": True,
-                        "reason": "called before PROCESS_INTERVAL_SECONDS",
-                        "next_allowed_in_seconds": max(0, int(PROCESS_INTERVAL_SECONDS - elapsed)),
-                        "container_size": container_size,
-                    }
-                ),
-                200,
-            )
+
+    # Ensure we only process once per minute bucket (hh:mm:00), independent of microseconds drift.
+    if LAST_PROCESS_AT is not None and _truncate_to_minute(LAST_PROCESS_AT) == current_minute:
+        with EVENT_CONTAINER_LOCK:
+            container_size = len(EVENT_CONTAINER)
+            failed_buffer_size = len(FAILED_DRAINED)
+        next_allowed = (current_minute + timedelta(minutes=1)).replace(second=0, microsecond=0)
+        return (
+            jsonify(
+                {
+                    "skipped": True,
+                    "reason": "already processed this minute",
+                    "next_allowed_at": next_allowed.isoformat(),
+                    "container_size": container_size,
+                    "failed_buffer_size": failed_buffer_size,
+                }
+            ),
+            200,
+        )
 
     with EVENT_CONTAINER_LOCK:
         has_work = bool(FAILED_DRAINED) or bool(EVENT_CONTAINER)
     if not has_work:
-        LAST_PROCESS_AT = now
+        LAST_PROCESS_AT = current_minute
         return jsonify({"processed": 0, "inserted": 0, "container_size": 0}), 200
 
     limit_raw = request.args.get("limit")
@@ -285,7 +294,7 @@ def process_siteanalysis_queue():
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 conn.commit()
-        LAST_PROCESS_AT = now
+        LAST_PROCESS_AT = current_minute
         with EVENT_CONTAINER_LOCK:
             container_size = len(EVENT_CONTAINER)
         return jsonify({"processed": len(drained), "inserted": len(rows), "container_size": container_size}), 200

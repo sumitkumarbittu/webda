@@ -4,7 +4,7 @@
   /* ------------------------------
      CONFIG
      ------------------------------ */
-  const API_ENDPOINT = "https://your-api.com/collect"; // unchanged
+  const API_ENDPOINT = "https://webda.onrender.com/siteanalysis/enqueue"; // unchanged
   const analytics_HEARTBEAT_INTERVAL = 10_000; // 10 seconds
 
   /* ------------------------------
