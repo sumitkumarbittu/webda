@@ -2,7 +2,7 @@ import os
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
@@ -27,6 +27,7 @@ FAILED_DRAINED: List[Dict[str, Any]] = []
 DB_INITIALIZED = False
 LAST_PROCESS_AT: Optional[datetime] = None
 LAST_PROCESS_MONOTONIC: Optional[float] = None
+PROCESS_LOCK = Lock()
 
 app = Flask(__name__)
 CORS(app)
@@ -42,6 +43,157 @@ def _parse_timestamptz(value: Any, field_name: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+def _process_siteanalysis_queue(limit: int) -> Tuple[Dict[str, Any], int]:
+    global LAST_PROCESS_AT
+    global LAST_PROCESS_MONOTONIC
+
+    now = datetime.now(timezone.utc)
+    now_mono = time.monotonic()
+
+    with PROCESS_LOCK:
+        if LAST_PROCESS_MONOTONIC is not None:
+            elapsed = now_mono - LAST_PROCESS_MONOTONIC
+            min_interval = float(PROCESS_INTERVAL_SECONDS)
+            if elapsed < min_interval:
+                remaining = max(0, int(min_interval - elapsed))
+                next_allowed = now + timedelta(seconds=remaining)
+                with EVENT_CONTAINER_LOCK:
+                    container_size = len(EVENT_CONTAINER)
+                    failed_buffer_size = len(FAILED_DRAINED)
+                return (
+                    {
+                        "skipped": True,
+                        "reason": "already processed recently",
+                        "next_allowed_in_seconds": remaining,
+                        "next_allowed_at": next_allowed.isoformat(),
+                        "container_size": container_size,
+                        "failed_buffer_size": failed_buffer_size,
+                    },
+                    200,
+                )
+
+        with EVENT_CONTAINER_LOCK:
+            has_work = bool(FAILED_DRAINED) or bool(EVENT_CONTAINER)
+        if not has_work:
+            LAST_PROCESS_AT = now
+            LAST_PROCESS_MONOTONIC = now_mono
+            return {"processed": 0, "inserted": 0, "container_size": 0}, 200
+
+        _init_db()
+
+        drained: List[Dict[str, Any]] = []
+        with EVENT_CONTAINER_LOCK:
+            if FAILED_DRAINED:
+                take = min(limit, len(FAILED_DRAINED))
+                drained.extend(FAILED_DRAINED[:take])
+                FAILED_DRAINED[:] = FAILED_DRAINED[take:]
+
+            remaining = limit - len(drained)
+            for _ in range(min(remaining, len(EVENT_CONTAINER))):
+                drained.append(EVENT_CONTAINER.popleft())
+
+        latest_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for item in drained:
+            visitor_id = item.get("visitor_id")
+            if not isinstance(visitor_id, str) or not visitor_id:
+                continue
+
+            try:
+                session_started_at = _parse_timestamptz(item.get("session_started_at"), "session_started_at")
+                hb = _parse_timestamptz(item.get("last_heartbeat_at"), "last_heartbeat_at")
+            except Exception:
+                continue
+
+            key = (visitor_id, session_started_at.isoformat())
+            existing = latest_by_key.get(key)
+            if existing is None:
+                latest_by_key[key] = item
+            else:
+                try:
+                    existing_hb = _parse_timestamptz(existing.get("last_heartbeat_at"), "last_heartbeat_at")
+                except Exception:
+                    existing_hb = datetime.min.replace(tzinfo=timezone.utc)
+                if hb >= existing_hb:
+                    latest_by_key[key] = item
+
+        rows: List[Tuple[Any, Any, Any, Any, Any]] = []
+        for item in latest_by_key.values():
+            try:
+                session_started_at = _parse_timestamptz(item.get("session_started_at"), "session_started_at")
+                last_heartbeat_at = _parse_timestamptz(item.get("last_heartbeat_at"), "last_heartbeat_at")
+            except Exception:
+                continue
+
+            rows.append(
+                (
+                    item.get("visitor_id"),
+                    item.get("city"),
+                    item.get("url"),
+                    session_started_at,
+                    last_heartbeat_at,
+                )
+            )
+
+        if not rows:
+            LAST_PROCESS_AT = now
+            LAST_PROCESS_MONOTONIC = now_mono
+            with EVENT_CONTAINER_LOCK:
+                container_size = len(EVENT_CONTAINER)
+            return {"processed": len(drained), "inserted": 0, "container_size": container_size}, 200
+
+        values_sql = sql.SQL(", ").join(sql.SQL("(%s, %s, %s, %s, %s)") for _ in rows)
+        query = sql.SQL(
+            "INSERT INTO {table} (visitor_id, city, url, session_started_at, last_heartbeat_at) VALUES "
+        ).format(table=sql.Identifier(SITEANALYSIS_TABLE)) + values_sql
+
+        params: List[Any] = [v for row in rows for v in row]
+
+        try:
+            with psycopg.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    conn.commit()
+            LAST_PROCESS_AT = now
+            LAST_PROCESS_MONOTONIC = now_mono
+            with EVENT_CONTAINER_LOCK:
+                container_size = len(EVENT_CONTAINER)
+            return (
+                {"processed": len(drained), "inserted": len(rows), "container_size": container_size},
+                200,
+            )
+        except Exception as e:
+            with EVENT_CONTAINER_LOCK:
+                FAILED_DRAINED[:0] = drained
+            return (
+                {
+                    "error": str(e),
+                    "processed": 0,
+                    "inserted": 0,
+                    "container_size": len(EVENT_CONTAINER),
+                    "failed_buffer_size": len(FAILED_DRAINED),
+                },
+                500,
+            )
+
+
+def _scheduler_loop() -> None:
+    while True:
+        now = time.time()
+        next_minute = (int(now // 60) + 1) * 60
+        time.sleep(max(0.0, next_minute - now))
+        _process_siteanalysis_queue(limit=500)
+
+
+def _maybe_start_scheduler() -> None:
+    enabled = os.environ.get("ENABLE_INTERNAL_SCHEDULER", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "false":
+        return
+    t = Thread(target=_scheduler_loop, name="siteanalysis-scheduler", daemon=True)
+    t.start()
 
 
 def _init_db() -> None:
@@ -162,42 +314,6 @@ def enqueue_siteanalysis():
 
 @app.post("/siteanalysis/process")
 def process_siteanalysis_queue():
-    global LAST_PROCESS_AT
-    global LAST_PROCESS_MONOTONIC
-
-    now = datetime.now(timezone.utc)
-
-    now_mono = time.monotonic()
-    if LAST_PROCESS_MONOTONIC is not None:
-        elapsed = now_mono - LAST_PROCESS_MONOTONIC
-        min_interval = float(PROCESS_INTERVAL_SECONDS)
-        if elapsed < min_interval:
-            remaining = max(0, int(min_interval - elapsed))
-            next_allowed = now + timedelta(seconds=remaining)
-            with EVENT_CONTAINER_LOCK:
-                container_size = len(EVENT_CONTAINER)
-                failed_buffer_size = len(FAILED_DRAINED)
-            return (
-                jsonify(
-                    {
-                        "skipped": True,
-                        "reason": "already processed recently",
-                        "next_allowed_in_seconds": remaining,
-                        "next_allowed_at": next_allowed.isoformat(),
-                        "container_size": container_size,
-                        "failed_buffer_size": failed_buffer_size,
-                    }
-                ),
-                200,
-            )
-
-    with EVENT_CONTAINER_LOCK:
-        has_work = bool(FAILED_DRAINED) or bool(EVENT_CONTAINER)
-    if not has_work:
-        LAST_PROCESS_AT = now
-        LAST_PROCESS_MONOTONIC = now_mono
-        return jsonify({"processed": 0, "inserted": 0, "container_size": 0}), 200
-
     limit_raw = request.args.get("limit")
     try:
         limit = int(limit_raw) if limit_raw is not None else 500
@@ -206,99 +322,8 @@ def process_siteanalysis_queue():
     if limit <= 0:
         return jsonify({"error": "limit must be > 0"}), 400
 
-    _init_db()
-
-    drained: List[Dict[str, Any]] = []
-    with EVENT_CONTAINER_LOCK:
-        if FAILED_DRAINED:
-            take = min(limit, len(FAILED_DRAINED))
-            drained.extend(FAILED_DRAINED[:take])
-            FAILED_DRAINED[:] = FAILED_DRAINED[take:]
-
-        remaining = limit - len(drained)
-        for _ in range(min(remaining, len(EVENT_CONTAINER))):
-            drained.append(EVENT_CONTAINER.popleft())
-
-    latest_by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
-    for item in drained:
-        visitor_id = item.get("visitor_id")
-        if not isinstance(visitor_id, str) or not visitor_id:
-            continue
-
-        try:
-            session_started_at = _parse_timestamptz(item.get("session_started_at"), "session_started_at")
-            hb = _parse_timestamptz(item.get("last_heartbeat_at"), "last_heartbeat_at")
-        except Exception:
-            continue
-
-        key = (visitor_id, session_started_at.isoformat())
-        existing = latest_by_key.get(key)
-        if existing is None:
-            latest_by_key[key] = item
-        else:
-            try:
-                existing_hb = _parse_timestamptz(existing.get("last_heartbeat_at"), "last_heartbeat_at")
-            except Exception:
-                existing_hb = datetime.min.replace(tzinfo=timezone.utc)
-            if hb >= existing_hb:
-                latest_by_key[key] = item
-
-    rows: List[Tuple[Any, Any, Any, Any, Any]] = []
-    for item in latest_by_key.values():
-        try:
-            session_started_at = _parse_timestamptz(item.get("session_started_at"), "session_started_at")
-            last_heartbeat_at = _parse_timestamptz(item.get("last_heartbeat_at"), "last_heartbeat_at")
-        except Exception:
-            continue
-
-        rows.append(
-            (
-                item.get("visitor_id"),
-                item.get("city"),
-                item.get("url"),
-                session_started_at,
-                last_heartbeat_at,
-            )
-        )
-
-    if not rows:
-        LAST_PROCESS_AT = now
-        return jsonify({"processed": len(drained), "inserted": 0, "container_size": len(EVENT_CONTAINER)}), 200
-
-    values_sql = sql.SQL(", ").join(sql.SQL("(%s, %s, %s, %s, %s)") for _ in rows)
-    query = sql.SQL(
-        "INSERT INTO {table} (visitor_id, city, url, session_started_at, last_heartbeat_at) VALUES "
-    ).format(table=sql.Identifier(SITEANALYSIS_TABLE)) + values_sql
-
-    params: List[Any] = [v for row in rows for v in row]
-
-    try:
-        with psycopg.connect(DATABASE_URL) as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                conn.commit()
-        LAST_PROCESS_AT = now
-        LAST_PROCESS_MONOTONIC = now_mono
-        with EVENT_CONTAINER_LOCK:
-            container_size = len(EVENT_CONTAINER)
-        return jsonify({"processed": len(drained), "inserted": len(rows), "container_size": container_size}), 200
-    except Exception as e:
-        # Put drained items into FAILED_DRAINED so we do not lose them.
-        # This is safe even if new events were enqueued while inserting.
-        with EVENT_CONTAINER_LOCK:
-            FAILED_DRAINED[:0] = drained
-        return (
-            jsonify(
-                {
-                    "error": str(e),
-                    "processed": 0,
-                    "inserted": 0,
-                    "container_size": len(EVENT_CONTAINER),
-                    "failed_buffer_size": len(FAILED_DRAINED),
-                }
-            ),
-            500,
-        )
+    payload, status = _process_siteanalysis_queue(limit=limit)
+    return jsonify(payload), status
 
 
 @app.get("/siteanalysis/state")
@@ -319,5 +344,9 @@ def siteanalysis_state():
 
 
 if __name__ == "__main__":
+    _maybe_start_scheduler()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
+
+
+_maybe_start_scheduler()
