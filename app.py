@@ -332,7 +332,7 @@ def siteanalysis_state():
     )
 
 
-@app.before_serving
+@app.before_request
 def _start_scheduler_once_per_process() -> None:
     _ensure_scheduler_started()
 
