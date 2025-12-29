@@ -1,4 +1,5 @@
 import os
+import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -25,10 +26,7 @@ FAILED_DRAINED: List[Dict[str, Any]] = []
 
 DB_INITIALIZED = False
 LAST_PROCESS_AT: Optional[datetime] = None
-
-
-def _truncate_to_minute(dt: datetime) -> datetime:
-    return dt.replace(second=0, microsecond=0)
+LAST_PROCESS_MONOTONIC: Optional[float] = None
 
 app = Flask(__name__)
 CORS(app)
@@ -165,54 +163,39 @@ def enqueue_siteanalysis():
 @app.post("/siteanalysis/process")
 def process_siteanalysis_queue():
     global LAST_PROCESS_AT
+    global LAST_PROCESS_MONOTONIC
 
     now = datetime.now(timezone.utc)
 
-    current_minute = _truncate_to_minute(now)
-
-    # Only insert exactly at hh:mm:00
-    if now.second != 0:
-        next_allowed = (now + timedelta(minutes=1)).replace(second=0, microsecond=0)
-
-        with EVENT_CONTAINER_LOCK:
-            container_size = len(EVENT_CONTAINER)
-            failed_buffer_size = len(FAILED_DRAINED)
-        return (
-            jsonify(
-                {
-                    "skipped": True,
-                    "reason": "not at hh:mm:00",
-                    "next_allowed_at": next_allowed.isoformat(),
-                    "container_size": container_size,
-                    "failed_buffer_size": failed_buffer_size,
-                }
-            ),
-            200,
-        )
-
-    # Ensure we only process once per minute bucket (hh:mm:00), independent of microseconds drift.
-    if LAST_PROCESS_AT is not None and _truncate_to_minute(LAST_PROCESS_AT) == current_minute:
-        with EVENT_CONTAINER_LOCK:
-            container_size = len(EVENT_CONTAINER)
-            failed_buffer_size = len(FAILED_DRAINED)
-        next_allowed = (current_minute + timedelta(minutes=1)).replace(second=0, microsecond=0)
-        return (
-            jsonify(
-                {
-                    "skipped": True,
-                    "reason": "already processed this minute",
-                    "next_allowed_at": next_allowed.isoformat(),
-                    "container_size": container_size,
-                    "failed_buffer_size": failed_buffer_size,
-                }
-            ),
-            200,
-        )
+    now_mono = time.monotonic()
+    if LAST_PROCESS_MONOTONIC is not None:
+        elapsed = now_mono - LAST_PROCESS_MONOTONIC
+        min_interval = float(PROCESS_INTERVAL_SECONDS)
+        if elapsed < min_interval:
+            remaining = max(0, int(min_interval - elapsed))
+            next_allowed = now + timedelta(seconds=remaining)
+            with EVENT_CONTAINER_LOCK:
+                container_size = len(EVENT_CONTAINER)
+                failed_buffer_size = len(FAILED_DRAINED)
+            return (
+                jsonify(
+                    {
+                        "skipped": True,
+                        "reason": "already processed recently",
+                        "next_allowed_in_seconds": remaining,
+                        "next_allowed_at": next_allowed.isoformat(),
+                        "container_size": container_size,
+                        "failed_buffer_size": failed_buffer_size,
+                    }
+                ),
+                200,
+            )
 
     with EVENT_CONTAINER_LOCK:
         has_work = bool(FAILED_DRAINED) or bool(EVENT_CONTAINER)
     if not has_work:
-        LAST_PROCESS_AT = current_minute
+        LAST_PROCESS_AT = now
+        LAST_PROCESS_MONOTONIC = now_mono
         return jsonify({"processed": 0, "inserted": 0, "container_size": 0}), 200
 
     limit_raw = request.args.get("limit")
@@ -294,7 +277,8 @@ def process_siteanalysis_queue():
             with conn.cursor() as cur:
                 cur.execute(query, params)
                 conn.commit()
-        LAST_PROCESS_AT = current_minute
+        LAST_PROCESS_AT = now
+        LAST_PROCESS_MONOTONIC = now_mono
         with EVENT_CONTAINER_LOCK:
             container_size = len(EVENT_CONTAINER)
         return jsonify({"processed": len(drained), "inserted": len(rows), "container_size": container_size}), 200
