@@ -270,7 +270,7 @@ def _persist_compacted_sessions(limit: int = 5000) -> None:
         upsert_sql = insert_sql + sql.SQL(
             " ON CONFLICT (visitor_id, session_started_at) DO UPDATE SET "
             "city = EXCLUDED.city, "
-            "url = COALESCE( NULLIF(siteanalysis.url, NULLIF(EXCLUDED.url, '') ), "
+            "url = COALESCE(NULLIF({table}.url, ''), NULLIF(EXCLUDED.url, '') ), "
             "last_heartbeat_at = EXCLUDED.last_heartbeat_at "
             "WHERE {table}.last_heartbeat_at <= EXCLUDED.last_heartbeat_at"
         ).format(table=sql.Identifier(SITEANALYSIS_TABLE))
