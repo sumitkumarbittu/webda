@@ -119,8 +119,11 @@ Paste this on your website. It will:
   /* ------------------------------
      CONFIG
      ------------------------------ */
-  const API_ENDPOINT = "https://your-api.com/collect"; // unchanged
-  const analytics_HEARTBEAT_INTERVAL = 10_000; // 10 seconds
+  const analytics_SESSION_RESET_AFTER = 90_000; // 90 seconds
+
+  const API_ENDPOINT = "https://webda.onrender.com/siteanalysis/enqueue"; // unchanged
+  let analytics_HEARTBEAT_INTERVAL = 10_000; // 10 seconds
+  let analytics_hidden_at = null;
 
   /* ------------------------------
      VISITOR ID (cached per browser)
@@ -142,7 +145,30 @@ Paste this on your website. It will:
   /* ------------------------------
      SESSION START
      ------------------------------ */
-  const analytics_session_started_at = new Date().toISOString();
+  let analytics_session_started_at = new Date().toISOString();
+  let analytics_last_url = analytics_getCurrentUrl();
+
+
+  /* ------------------------------
+     VISIBILITY TRACKING
+     ------------------------------ */
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      analytics_hidden_at = Date.now();
+    }
+
+    if (document.visibilityState === "visible" && analytics_hidden_at) {
+      const hiddenDuration = Date.now() - analytics_hidden_at;
+
+      if (hiddenDuration > analytics_SESSION_RESET_AFTER) {
+        // Reset session
+        analytics_session_started_at = new Date().toISOString();
+      }
+
+      analytics_hidden_at = null;
+    }
+  });
+
 
   /* ------------------------------
      CURRENT URL
@@ -177,25 +203,29 @@ Paste this on your website. It will:
      HEARTBEAT LOOP
      ------------------------------ */
   setInterval(() => {
+    const currentUrl = analytics_getCurrentUrl();
+
+    // 🔁 URL changed → new session
+    if (currentUrl !== analytics_last_url) {
+      analytics_session_started_at = new Date().toISOString();
+      analytics_last_url = currentUrl;
+    }
+
     const analytics_payload = {
       visitor_id: analytics_visitor_id,
       city: analytics_city,
-      current_url: analytics_getCurrentUrl(),
+      url: currentUrl,
       session_started_at: analytics_session_started_at
     };
 
     fetch(API_ENDPOINT, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(analytics_payload),
       keepalive: true
-    }).catch(() => {
-      /* silent failure */
-    });
-
+    }).catch(() => {});
   }, analytics_HEARTBEAT_INTERVAL);
+
 
   /* ------------------------------
      FINAL SEND ON PAGE EXIT
@@ -204,7 +234,7 @@ Paste this on your website. It will:
     const analytics_payload = {
       visitor_id: analytics_visitor_id,
       city: analytics_city,
-      current_url: analytics_getCurrentUrl(),
+      url: analytics_getCurrentUrl(),
       session_started_at: analytics_session_started_at
     };
 
