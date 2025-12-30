@@ -37,6 +37,8 @@ LAST_PROCESS_MONOTONIC: Optional[float] = None
 app = Flask(__name__)
 CORS(app)
 
+DB_INIT_LOCK = Lock()
+
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -53,98 +55,117 @@ def _parse_timestamptz(value: Any, field_name: str) -> datetime:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
-
 def _init_db() -> None:
     global DB_INITIALIZED
+
+    # Fast path
     if DB_INITIALIZED:
         return
 
-    ddl = sql.SQL(
-        """
-        CREATE TABLE IF NOT EXISTS {table} (
-            id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            visitor_id TEXT NOT NULL,
-            city TEXT,
-            url TEXT,
-            session_started_at TIMESTAMPTZ NOT NULL,
-            last_heartbeat_at TIMESTAMPTZ NOT NULL
+    with DB_INIT_LOCK:
+        # Double-check inside lock
+        if DB_INITIALIZED:
+            return
+
+        ddl = sql.SQL(
+            """
+            CREATE TABLE IF NOT EXISTS {table} (
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                visitor_id TEXT NOT NULL,
+                city TEXT,
+                url TEXT,
+                session_started_at TIMESTAMPTZ NOT NULL,
+                last_heartbeat_at TIMESTAMPTZ NOT NULL
+            )
+            """
+        ).format(table=sql.Identifier(SITEANALYSIS_TABLE))
+
+        ensure_unique_session = sql.SQL(
+            """
+            DO $$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                WHERE t.relname = {table_name}
+                  AND c.contype = 'u'
+                  AND pg_get_constraintdef(c.oid) ILIKE '%(visitor_id, session_started_at)%'
+              ) THEN
+                EXECUTE format(
+                  'ALTER TABLE %I ADD CONSTRAINT %I UNIQUE (visitor_id, session_started_at)',
+                  {table_name},
+                  {constraint_name}
+                );
+              END IF;
+            END $$;
+            """
+        ).format(
+            table_name=sql.Literal(SITEANALYSIS_TABLE),
+            constraint_name=sql.Literal(
+                f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_key"
+            ),
         )
-        """
-    ).format(table=sql.Identifier(SITEANALYSIS_TABLE))
 
-    ensure_unique_session = sql.SQL(
-        """
-        DO $$
-        BEGIN
-          IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint c
-            JOIN pg_class t ON t.oid = c.conrelid
-            WHERE t.relname = {table_name}
-              AND c.contype = 'u'
-              AND pg_get_constraintdef(c.oid) ILIKE '%(visitor_id, session_started_at)%'
-          ) THEN
-            EXECUTE format(
-              'ALTER TABLE %I ADD CONSTRAINT %I UNIQUE (visitor_id, session_started_at)',
-              {table_name},
-              {constraint_name}
-            );
-          END IF;
-        END $$;
-        """
-    ).format(
-        table_name=sql.Literal(SITEANALYSIS_TABLE),
-        constraint_name=sql.Literal(f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_key"),
-    )
+        drop_unique_visitor_id = sql.SQL(
+            """
+            DO $$
+            DECLARE
+              conname text;
+            BEGIN
+              SELECT c.conname INTO conname
+              FROM pg_constraint c
+              JOIN pg_class t ON t.oid = c.conrelid
+              WHERE t.relname = {table_name}
+                AND c.contype = 'u'
+                AND pg_get_constraintdef(c.oid) ILIKE '%(visitor_id)%'
+              LIMIT 1;
 
-    drop_unique_visitor_id = sql.SQL(
-        """
-        DO $$
-        DECLARE
-          conname text;
-        BEGIN
-          SELECT c.conname INTO conname
-          FROM pg_constraint c
-          JOIN pg_class t ON t.oid = c.conrelid
-          JOIN pg_namespace n ON n.oid = t.relnamespace
-          WHERE t.relname = {table_name}
-            AND c.contype = 'u'
-            AND pg_get_constraintdef(c.oid) ILIKE '%(visitor_id)%'
-          LIMIT 1;
+              IF conname IS NOT NULL THEN
+                EXECUTE format(
+                    'ALTER TABLE %I DROP CONSTRAINT %I',
+                    {table_name},
+                    conname
+                );
+              END IF;
+            END $$;
+            """
+        ).format(table_name=sql.Literal(SITEANALYSIS_TABLE))
 
-          IF conname IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', {table_name}, conname);
-          END IF;
-        END $$;
-        """
-    ).format(table_name=sql.Literal(SITEANALYSIS_TABLE))
+        create_indexes = sql.SQL(
+            """
+            CREATE INDEX IF NOT EXISTS {idx_visitor}
+              ON {table} (visitor_id);
 
-    create_indexes = sql.SQL(
-        """
-        CREATE INDEX IF NOT EXISTS {idx_visitor} ON {table} (visitor_id);
-        CREATE INDEX IF NOT EXISTS {idx_visitor_session_started} ON {table} (visitor_id, session_started_at);
-        CREATE INDEX IF NOT EXISTS {idx_visitor_session_started_heartbeat} ON {table} (visitor_id, session_started_at, last_heartbeat_at DESC);
-        """
-    ).format(
-        idx_visitor=sql.Identifier(f"{SITEANALYSIS_TABLE}_visitor_id_idx"),
-        idx_visitor_session_started=sql.Identifier(
-            f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_idx"
-        ),
-        idx_visitor_session_started_heartbeat=sql.Identifier(
-            f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_last_heartbeat_at_idx"
-        ),
-        table=sql.Identifier(SITEANALYSIS_TABLE),
-    )
+            CREATE INDEX IF NOT EXISTS {idx_visitor_session}
+              ON {table} (visitor_id, session_started_at);
 
-    with psycopg.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cur:
-            cur.execute(ddl)
-            cur.execute(drop_unique_visitor_id)
-            cur.execute(ensure_unique_session)
-            cur.execute(create_indexes)
-            conn.commit()
+            CREATE INDEX IF NOT EXISTS {idx_visitor_session_hb}
+              ON {table} (visitor_id, session_started_at, last_heartbeat_at DESC);
+            """
+        ).format(
+            idx_visitor=sql.Identifier(f"{SITEANALYSIS_TABLE}_visitor_id_idx"),
+            idx_visitor_session=sql.Identifier(
+                f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_idx"
+            ),
+            idx_visitor_session_hb=sql.Identifier(
+                f"{SITEANALYSIS_TABLE}_visitor_id_session_started_at_last_heartbeat_at_idx"
+            ),
+            table=sql.Identifier(SITEANALYSIS_TABLE),
+        )
 
-    DB_INITIALIZED = True
+        # ---- DB EXECUTION ----
+        with psycopg.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cur:
+                cur.execute(ddl)
+                cur.execute(drop_unique_visitor_id)
+                cur.execute(ensure_unique_session)
+                cur.execute(create_indexes)
+                conn.commit()
+
+        # ✅ Set flag ONLY after success
+        DB_INITIALIZED = True
+
 
 @app.get("/health")
 def health():
@@ -237,6 +258,12 @@ def _persist_compacted_sessions(limit: int = 5000) -> None:
             LAST_PROCESS_MONOTONIC = now_mono
             return
 
+        # Track keys to delete later
+        drained_keys = [
+            (item["visitor_id"], item["session_started_at"])
+            for item in drained
+        ]
+
         _init_db()
 
         rows: List[Tuple[Any, Any, Any, Any, Any]] = []
@@ -281,6 +308,12 @@ def _persist_compacted_sessions(limit: int = 5000) -> None:
             with conn.cursor() as cur:
                 cur.execute(upsert_sql, params)
                 conn.commit()
+
+        # ✅ Remove persisted items from memory
+        with EVENT_CONTAINER_LOCK:
+            for key in drained_keys:
+                EVENT_CONTAINER.pop(key, None)
+
 
         LAST_PROCESS_AT = now
         LAST_PROCESS_MONOTONIC = now_mono
@@ -331,12 +364,13 @@ def siteanalysis_state():
         }
     )
 
-
+'''
 @app.before_request
 def _start_scheduler_once_per_process() -> None:
     _ensure_scheduler_started()
-
+'''
 
 if __name__ == "__main__":
+    _ensure_scheduler_started()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
