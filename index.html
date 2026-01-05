@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analytics Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #f8f9fa;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #e9ecef;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+            --accent-color: #0d6efd;
+            --accent-hover: #0b5ed7;
+            --success-color: #198754;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --shadow: 0 2px 8px rgba(0,0,0,0.1);
+            --shadow-hover: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        [data-theme="dark"] {
+            --bg-primary: #1a1d23;
+            --bg-secondary: #25282e;
+            --bg-tertiary: #2d3139;
+            --text-primary: #e9ecef;
+            --text-secondary: #adb5bd;
+            --border-color: #495057;
+            --accent-color: #4c9aff;
+            --accent-hover: #3a8bff;
+            --success-color: #20c997;
+            --danger-color: #f05252;
+            --warning-color: #ffcc00;
+            --shadow: 0 2px 8px rgba(0,0,0,0.3);
+            --shadow-hover: 0 4px 12px rgba(0,0,0,0.4);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        /* Toggle Buttons */
+        .toggle-group {
+            display: inline-flex;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 4px;
+        }
+
+        .toggle-btn {
+            padding: 8px 16px;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 6px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn.active {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .toggle-btn:hover:not(.active) {
+            background: var(--bg-secondary);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .btn-primary {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border-color);
+        }
+
+        /* File Upload */
+        .file-upload {
+            position: relative;
+            display: inline-block;
+        }
+
+        .file-upload input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        /* KPI Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .kpi-card {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-hover);
+        }
+
+        .kpi-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .kpi-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .kpi-subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* Filters */
+        .filters {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow);
+        }
+
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .filter-group label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .filter-group input,
+        .filter-group select {
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        /* Charts */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+
+        .chart-card {
+            background: var(--bg-secondary);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+        }
+
+        .chart-card.full-width {
+            grid-column: 1 / -1;
+        }
+
+        .chart-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+
+        .chart-container.tall {
+            height: 400px;
+        }
+
+        /* Table */
+        .table-card {
+            background: var(--bg-secondary);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+        }
+
+        .table-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .table-search {
+            flex: 1;
+            max-width: 400px;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        thead {
+            background: var(--bg-tertiary);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-primary);
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background: var(--border-color);
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        tbody tr:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .pagination button {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border-radius: 6px;
+            cursor: pointer;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination button.active {
+            background: var(--accent-color);
+            color: white;
+            border-color: var(--accent-color);
+        }
+
+        /* Loader */
+        .loader {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--accent-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error */
+        .error {
+            background: var(--danger-color);
+            color: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+
+        .success {
+            background: var(--success-color);
+            color: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+
+        /* Live Feed */
+        .live-feed {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .live-item {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            animation: fadeIn 0.5s;
+        }
+
+        .live-item.new {
+            background: rgba(13, 110, 253, 0.1);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .kpi-grid {
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            }
+            
+            .header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            
+            .header-controls {
+                flex-direction: column;
+            }
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <h1>📊 Analytics Dashboard</h1>
+                <div id="modeIndicator" style="font-size: 14px; color: var(--text-secondary); margin-top: 4px;">
+                    Mode: <strong id="currentMode">DB Mode</strong>
+                </div>
+            </div>
+            <div class="header-controls">
+                <div class="toggle-group">
+                    <button class="toggle-btn active" id="dbModeBtn">DB Mode</button>
+                    <button class="toggle-btn" id="csvModeBtn">CSV Mode</button>
+                </div>
+                <div class="toggle-group">
+                    <button class="toggle-btn active" id="lightModeBtn">☀️</button>
+                    <button class="toggle-btn" id="darkModeBtn">🌙</button>
+                </div>
+                <div class="file-upload hidden" id="csvUploadContainer">
+                    <input type="file" id="csvFile" accept=".csv">
+                    <label for="csvFile" class="btn btn-primary">Upload CSV</label>
+                </div>
+                <button class="btn btn-primary" id="refreshBtn">🔄 Refresh</button>
+            </div>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages"></div>
+
+        <!-- Loading -->
+        <div id="loader" class="loader hidden">
+            <div class="spinner"></div>
+            <p>Loading data...</p>
+        </div>
+
+        <!-- Main Content -->
+        <div id="content" class="hidden">
+            <!-- KPIs -->
+            <div class="kpi-grid" id="kpiGrid"></div>
+
+            <!-- Filters -->
+            <div class="filters">
+                <h3 style="margin-bottom: 12px;">Filters</h3>
+                <div class="filters-grid">
+                    <div class="filter-group">
+                        <label>Start Date</label>
+                        <input type="date" id="filterStartDate">
+                    </div>
+                    <div class="filter-group">
+                        <label>End Date</label>
+                        <input type="date" id="filterEndDate">
+                    </div>
+                    <div class="filter-group">
+                        <label>City</label>
+                        <select id="filterCity">
+                            <option value="">All Cities</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Page URL</label>
+                        <input type="text" id="filterUrl" placeholder="Filter by URL...">
+                    </div>
+                    <div class="filter-group">
+                        <label>User Type</label>
+                        <select id="filterUserType">
+                            <option value="">All Users</option>
+                            <option value="new">New Users</option>
+                            <option value="returning">Returning Users</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Group By</label>
+                        <select id="groupBy">
+                            <option value="day">Day</option>
+                            <option value="hour">Hour</option>
+                            <option value="city">City</option>
+                            <option value="page">Page</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-top: 16px; display: flex; gap: 8px;">
+                    <button class="btn btn-primary" id="applyFilters">Apply Filters</button>
+                    <button class="btn btn-secondary" id="clearFilters">Clear Filters</button>
+                    <button class="btn btn-secondary" id="exportCsv">Export CSV</button>
+                    <button class="btn btn-secondary" id="exportJson">Export JSON</button>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid">
+                <div class="chart-card full-width">
+                    <h3 class="chart-title">Sessions Over Time</h3>
+                    <div class="chart-container tall">
+                        <canvas id="sessionsTimeChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="chart-title">Sessions by Hour</h3>
+                    <div class="chart-container">
+                        <canvas id="sessionsHourChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="chart-title">User Types</h3>
+                    <div class="chart-container">
+                        <canvas id="userTypesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="chart-title">Top Pages</h3>
+                    <div class="chart-container">
+                        <canvas id="topPagesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 class="chart-title">Top Cities</h3>
+                    <div class="chart-container">
+                        <canvas id="topCitiesChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card full-width" id="liveContainer">
+                    <h3 class="chart-title">🔴 Live Feed (Last 50 Sessions)</h3>
+                    <div class="live-feed" id="liveFeed"></div>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="table-card">
+                <h3 class="chart-title">Session Data</h3>
+                <div class="table-controls">
+                    <input type="text" class="table-search" id="tableSearch" placeholder="Search sessions...">
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-secondary" id="printReport">🖨️ Print</button>
+                        <button class="btn btn-secondary" id="copyTable">📋 Copy</button>
+                    </div>
+                </div>
+                <div class="table-wrapper">
+                    <table id="dataTable">
+                        <thead>
+                            <tr>
+                                <th data-sort="visitor_id">Visitor ID ↕</th>
+                                <th data-sort="city">City ↕</th>
+                                <th data-sort="url">URL ↕</th>
+                                <th data-sort="session_started_at">Started At ↕</th>
+                                <th data-sort="last_heartbeat_at">Last Heartbeat ↕</th>
+                                <th data-sort="session_duration">Duration (s) ↕</th>
+                                <th data-sort="is_returning_user">Returning? ↕</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody"></tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="pagination"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========================================
+        // GLOBAL STATE
+        // ========================================
+        const state = {
+            mode: 'db', // 'db' or 'csv'
+            theme: localStorage.getItem('theme') || 'light',
+            rawData: [],
+            processedData: [],
+            filteredData: [],
+            charts: {},
+            pollInterval: null,
+            lastDataHash: null,
+            currentPage: 1,
+            itemsPerPage: 50,
+            sortColumn: 'session_started_at',
+            sortOrder: 'desc',
+            filters: {
+                startDate: null,
+                endDate: null,
+                city: '',
+                url: '',
+                userType: ''
+            }
+        };
+
+        // ========================================
+        // INITIALIZATION
+        // ========================================
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+            initEventListeners();
+            loadData();
+        });
+
+        function initTheme() {
+            document.documentElement.setAttribute('data-theme', state.theme);
+            const lightBtn = document.getElementById('lightModeBtn');
+            const darkBtn = document.getElementById('darkModeBtn');
+            
+            if (state.theme === 'dark') {
+                lightBtn.classList.remove('active');
+                darkBtn.classList.add('active');
+            }
+        }
+
+        function initEventListeners() {
+            // Mode toggle
+            document.getElementById('dbModeBtn').addEventListener('click', () => switchMode('db'));
+            document.getElementById('csvModeBtn').addEventListener('click', () => switchMode('csv'));
+
+            // Theme toggle
+            document.getElementById('lightModeBtn').addEventListener('click', () => setTheme('light'));
+            document.getElementById('darkModeBtn').addEventListener('click', () => setTheme('dark'));
+
+            // CSV upload
+            document.getElementById('csvFile').addEventListener('change', handleCsvUpload);
+
+            // Refresh
+            document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+            // Filters
+            document.getElementById('applyFilters').addEventListener('click', applyFilters);
+            document.getElementById('clearFilters').addEventListener('click', clearFilters);
+
+            // Export
+            document.getElementById('exportCsv').addEventListener('click', exportCsv);
+            document.getElementById('exportJson').addEventListener('click', exportJson);
+            document.getElementById('printReport').addEventListener('click', printReport);
+            document.getElementById('copyTable').addEventListener('click', copyTableToClipboard);
+
+            // Table search
+            document.getElementById('tableSearch').addEventListener('input', handleTableSearch);
+
+            // Table sorting
+            document.querySelectorAll('#dataTable th[data-sort]').forEach(th => {
+                th.addEventListener('click', () => handleSort(th.dataset.sort));
+            });
+        }
+
+        // ========================================
+        // MODE MANAGEMENT
+        // ========================================
+        function switchMode(mode) {
+            state.mode = mode;
+            
+            // Update UI
+            document.getElementById('dbModeBtn').classList.toggle('active', mode === 'db');
+            document.getElementById('csvModeBtn').classList.toggle('active', mode === 'csv');
+            document.getElementById('currentMode').textContent = mode === 'db' ? 'DB Mode' : 'CSV Mode';
+            document.getElementById('csvUploadContainer').classList.toggle('hidden', mode === 'db');
+            document.getElementById('liveContainer').classList.toggle('hidden', mode === 'csv');
+
+            // Clear polling if switching to CSV
+            if (mode === 'csv') {
+                stopPolling();
+            }
+
+            // Reload data
+            loadData();
+        }
+
+        // ========================================
+        // THEME MANAGEMENT
+        // ========================================
+        function setTheme(theme) {
+            state.theme = theme;
+            localStorage.setItem('theme', theme);
+            document.documentElement.setAttribute('data-theme', theme);
+            
+            const lightBtn = document.getElementById('lightModeBtn');
+            const darkBtn = document.getElementById('darkModeBtn');
+            
+            lightBtn.classList.toggle('active', theme === 'light');
+            darkBtn.classList.toggle('active', theme === 'dark');
+
+            // Update charts
+            updateChartThemes();
+        }
+
+        function updateChartThemes() {
+            Object.values(state.charts).forEach(chart => {
+                if (chart) {
+                    const isDark = state.theme === 'dark';
+                    chart.options.plugins.legend.labels.color = isDark ? '#e9ecef' : '#212529';
+                    chart.options.scales.x.ticks.color = isDark ? '#adb5bd' : '#6c757d';
+                    chart.options.scales.x.grid.color = isDark ? '#495057' : '#dee2e6';
+                    chart.options.scales.y.ticks.color = isDark ? '#adb5bd' : '#6c757d';
+                    chart.options.scales.y.grid.color = isDark ? '#495057' : '#dee2e6';
+                    chart.update();
+                }
+            });
+        }
+
+        // ========================================
+        // DATA LOADING
+        // ========================================
+        async function loadData() {
+            if (state.mode === 'db') {
+                await loadFromDB();
+            } else {
+                // CSV mode waits for upload
+                if (state.rawData.length === 0) {
+                    showMessage('Please upload a CSV file', 'warning');
+                } else {
+                    processAndRender();
+                }
+            }
+        }
+
+        async function loadFromDB() {
+            showLoader(true);
+            hideMessage();
+
+            try {
+                const response = await fetch('http://localhost:8000/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: 'SELECT * FROM siteanalysis;' })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // Parse DB result
+                const { columns, rows } = data.result;
+                state.rawData = rows.map(row => {
+                    const obj = {};
+                    columns.forEach((col, i) => {
+                        obj[col] = row[i];
+                    });
+                    return obj;
+                });
+
+                processAndRender();
+                startPolling();
+            } catch (error) {
+                showMessage(`Error loading data: ${error.message}`, 'error');
+                showLoader(false);
+            }
+        }
+
+        function handleCsvUpload(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            showLoader(true);
+            hideMessage();
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: (results) => {
+                    state.rawData = results.data;
+                    processAndRender();
+                    showMessage('CSV loaded successfully', 'success');
+                },
+                error: (error) => {
+                    showMessage(`CSV parse error: ${error.message}`, 'error');
+                    showLoader(false);
+                }
+            });
+        }
+
+        // ========================================
+        // DATA PROCESSING
+        // ========================================
+        function processAndRender() {
+            state.processedData = processData(state.rawData);
+            state.filteredData = [...state.processedData];
+            
+            renderKPIs();
+            renderCharts();
+            renderTable();
+            updateFilterOptions();
+            
+            showLoader(false);
+            document.getElementById('content').classList.remove('hidden');
+        }
+
+        function processData(rawData) {
+            const visitorSessions = {};
+
+            return rawData.map(row => {
+                const visitorId = row.visitor_id;
+                const startedAt = new Date(row.session_started_at);
+                const heartbeatAt = new Date(row.last_heartbeat_at);
+                
+                // Calculate session duration
+                const duration = Math.max(0, (heartbeatAt - startedAt) / 1000);
+                
+                // Track visitor sessions
+                if (!visitorSessions[visitorId]) {
+                    visitorSessions[visitorId] = {
+                        count: 0,
+                        firstSeen: startedAt,
+                        lastSeen: heartbeatAt,
+                        sessions: []
+                    };
+                }
+                visitorSessions[visitorId].count++;
+                visitorSessions[visitorId].sessions.push(startedAt);
+                visitorSessions[visitorId].firstSeen = new Date(
+                    Math.min(visitorSessions[visitorId].firstSeen, startedAt)
+                );
+                visitorSessions[visitorId].lastSeen = new Date(
+                    Math.max(visitorSessions[visitorId].lastSeen, heartbeatAt)
+                );
+
+                return {
+                    ...row,
+                    session_started_at: startedAt,
+                    last_heartbeat_at: heartbeatAt,
+                    session_duration: duration,
+                    session_day: startedAt.toISOString().split('T')[0],
+                    session_hour: startedAt.getHours(),
+                    city: row.city || 'Unknown',
+                    visitor_id: visitorId,
+                    url: row.url
+                };
+            }).map(session => {
+                const visitorInfo = visitorSessions[session.visitor_id];
+                const isReturning = visitorInfo.count > 1;
+                
+                return {
+                    ...session,
+                    is_returning_user: isReturning,
+                    sessions_per_visitor: visitorInfo.count,
+                    first_seen: visitorInfo.firstSeen,
+                    last_seen: visitorInfo.lastSeen
+                };
+            });
+        }
+
+        // ========================================
+        // KPI RENDERING
+        // ========================================
+        function renderKPIs() {
+            const data = state.filteredData;
+            const now = new Date();
+            const fiveMinutesAgo = new Date(now - 5 * 60 * 1000);
+
+            const kpis = [
+                { label: 'Total Sessions', value: data.length },
+                { label: 'Unique Visitors', value: new Set(data.map(d => d.visitor_id)).size },
+                { label: 'Returning Visitors', value: data.filter(d => d.is_returning_user).length },
+                { label: 'New Visitors', value: data.filter(d => !d.is_returning_user).length },
+                { 
+                    label: 'Avg Session Duration', 
+                    value: `${Math.round(data.reduce((sum, d) => sum + d.session_duration, 0) / data.length)}s` 
+                },
+                { 
+                    label: 'Longest Session', 
+                    value: `${Math.round(Math.max(...data.map(d => d.session_duration)))}s` 
+                },
+                { 
+                    label: 'Shortest Session', 
+                    value: `${Math.round(Math.min(...data.map(d => d.session_duration)))}s` 
+                },
+                { 
+                    label: 'Active Users (5 min)', 
+                    value: data.filter(d => d.last_heartbeat_at >= fiveMinutesAgo).length 
+                },
+                { label: 'Unique Pages', value: new Set(data.map(d => d.url)).size },
+                { label: 'Total Cities', value: new Set(data.map(d => d.city)).size }
+            ];
+
+            const grid = document.getElementById('kpiGrid');
+            grid.innerHTML = kpis.map(kpi => `
+                <div class="kpi-card">
+                    <div class="kpi-label">${kpi.label}</div>
+                    <div class="kpi-value">${kpi.value}</div>
+                </div>
+            `).join('');
+        }
+
+        // ========================================
+        // CHART RENDERING
+        // ========================================
+        function renderCharts() {
+            const data = state.filteredData;
+            
+            renderTimeSeriesChart(data);
+            renderHourlyChart(data);
+            renderUserTypesChart(data);
+            renderTopPagesChart(data);
+            renderTopCitiesChart(data);
+            renderLiveFeed(data);
+        }
+
+        function renderTimeSeriesChart(data) {
+            const grouped = groupBy(data, 'session_day');
+            const sorted = Object.keys(grouped).sort();
+            const counts = sorted.map(day => grouped[day].length);
+
+            renderChart('sessionsTimeChart', {
+                type: 'line',
+                data: {
+                    labels: sorted,
+                    datasets: [{
+                        label: 'Sessions',
+                        data: counts,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: getChartOptions('Sessions per Day')
+            });
+        }
+
+        function renderHourlyChart(data) {
+            const hourCounts = Array(24).fill(0);
+            data.forEach(d => hourCounts[d.session_hour]++);
+
+            renderChart('sessionsHourChart', {
+                type: 'bar',
+                data: {
+                    labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+                    datasets: [{
+                        label: 'Sessions',
+                        data: hourCounts,
+                        backgroundColor: '#0d6efd'
+                    }]
+                },
+                options: getChartOptions('Sessions by Hour')
+            });
+        }
+
+        function renderUserTypesChart(data) {
+            const returning = data.filter(d => d.is_returning_user).length;
+            const newUsers = data.length - returning;
+
+            renderChart('userTypesChart', {
+                type: 'doughnut',
+                data: {
+                    labels: ['New Users', 'Returning Users'],
+                    datasets: [{
+                        data: [newUsers, returning],
+                        backgroundColor: ['#198754', '#0d6efd']
+                    }]
+                },
+                options: {
+                    ...getChartOptions('User Types'),
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        function renderTopPagesChart(data) {
+            const pageCounts = countBy(data, 'url');
+            const top10 = Object.entries(pageCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+
+            renderChart('topPagesChart', {
+                type: 'bar',
+                data: {
+                    labels: top10.map(([url]) => truncate(url, 30)),
+                    datasets: [{
+                        label: 'Sessions',
+                        data: top10.map(([, count]) => count),
+                        backgroundColor: '#ffc107'
+                    }]
+                },
+                options: {
+                    ...getChartOptions('Top 10 Pages'),
+                    indexAxis: 'y'
+                }
+            });
+        }
+
+        function renderTopCitiesChart(data) {
+            const cityCounts = countBy(data, 'city');
+            const top10 = Object.entries(cityCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+
+            renderChart('topCitiesChart', {
+                type: 'bar',
+                data: {
+                    labels: top10.map(([city]) => city),
+                    datasets: [{
+                        label: 'Sessions',
+                        data: top10.map(([, count]) => count),
+                        backgroundColor: '#20c997'
+                    }]
+                },
+                options: {
+                    ...getChartOptions('Top 10 Cities'),
+                    indexAxis: 'y'
+                }
+            });
+        }
+
+        function renderChart(canvasId, config) {
+            const canvas = document.getElementById(canvasId);
+            if (state.charts[canvasId]) {
+                state.charts[canvasId].destroy();
+            }
+            state.charts[canvasId] = new Chart(canvas, config);
+        }
+
+        function getChartOptions(title) {
+            const isDark = state.theme === 'dark';
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: isDark ? '#e9ecef' : '#212529'
+                        }
+                    },
+                    title: {
+                        display: false
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: isDark ? '#adb5bd' : '#6c757d' },
+                        grid: { color: isDark ? '#495057' : '#dee2e6' }
+                    },
+                    y: {
+                        ticks: { color: isDark ? '#adb5bd' : '#6c757d' },
+                        grid: { color: isDark ? '#495057' : '#dee2e6' }
+                    }
+                }
+            };
+        }
+
+        function renderLiveFeed(data) {
+            if (state.mode === 'csv') return;
+
+            const sorted = [...data].sort((a, b) => b.session_started_at - a.session_started_at).slice(0, 50);
+            const feed = document.getElementById('liveFeed');
+            
+            feed.innerHTML = sorted.map(session => `
+                <div class="live-item">
+                    <strong>${session.visitor_id}</strong> - ${session.city}<br>
+                    <span style="font-size: 12px; color: var(--text-secondary);">
+                        ${session.url} • ${formatDate(session.session_started_at)}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        // ========================================
+        // TABLE RENDERING
+        // ========================================
+        function renderTable() {
+            const data = paginateData(state.filteredData);
+            const tbody = document.getElementById('tableBody');
+            
+            tbody.innerHTML = data.map(row => `
+                <tr>
+                    <td>${row.visitor_id}</td>
+                    <td>${row.city}</td>
+                    <td>${truncate(row.url, 50)}</td>
+                    <td>${formatDate(row.session_started_at)}</td>
+                    <td>${formatDate(row.last_heartbeat_at)}</td>
+                    <td>${Math.round(row.session_duration)}</td>
+                    <td>${row.is_returning_user ? 'Yes' : 'No'}</td>
+                </tr>
+            `).join('');
+
+            renderPagination();
+        }
+
+        function paginateData(data) {
+            const start = (state.currentPage - 1) * state.itemsPerPage;
+            const end = start + state.itemsPerPage;
+            return data.slice(start, end);
+        }
+
+        function renderPagination() {
+            const totalPages = Math.ceil(state.filteredData.length / state.itemsPerPage);
+            const pagination = document.getElementById('pagination');
+            
+            let html = `
+                <button ${state.currentPage === 1 ? 'disabled' : ''} onclick="changePage(${state.currentPage - 1})">Previous</button>
+            `;
+            
+            for (let i = 1; i <= Math.min(totalPages, 10); i++) {
+                html += `
+                    <button class="${i === state.currentPage ? 'active' : ''}" onclick="changePage(${i})">${i}</button>
+                `;
+            }
+            
+            html += `
+                <button ${state.currentPage === totalPages ? 'disabled' : ''} onclick="changePage(${state.currentPage + 1})">Next</button>
+            `;
+            
+            pagination.innerHTML = html;
+        }
+
+        function changePage(page) {
+            const totalPages = Math.ceil(state.filteredData.length / state.itemsPerPage);
+            if (page < 1 || page > totalPages) return;
+            state.currentPage = page;
+            renderTable();
+        }
+
+        function handleTableSearch(e) {
+            const query = e.target.value.toLowerCase();
+            state.filteredData = state.processedData.filter(row => 
+                row.visitor_id.toLowerCase().includes(query) ||
+                row.city.toLowerCase().includes(query) ||
+                row.url.toLowerCase().includes(query)
+            );
+            state.currentPage = 1;
+            renderTable();
+        }
+
+        function handleSort(column) {
+            if (state.sortColumn === column) {
+                state.sortOrder = state.sortOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.sortColumn = column;
+                state.sortOrder = 'asc';
+            }
+
+            state.filteredData.sort((a, b) => {
+                let aVal = a[column];
+                let bVal = b[column];
+                
+                if (aVal instanceof Date) {
+                    aVal = aVal.getTime();
+                    bVal = bVal.getTime();
+                }
+                
+                if (state.sortOrder === 'asc') {
+                    return aVal > bVal ? 1 : -1;
+                } else {
+                    return aVal < bVal ? 1 : -1;
+                }
+            });
+
+            renderTable();
+        }
+
+        // ========================================
+        // FILTERING
+        // ========================================
+        function updateFilterOptions() {
+            const cities = [...new Set(state.processedData.map(d => d.city))].sort();
+            const citySelect = document.getElementById('filterCity');
+            citySelect.innerHTML = '<option value="">All Cities</option>' + 
+                cities.map(city => `<option value="${city}">${city}</option>`).join('');
+        }
+
+        function applyFilters() {
+            const startDate = document.getElementById('filterStartDate').value;
+            const endDate = document.getElementById('filterEndDate').value;
+            const city = document.getElementById('filterCity').value;
+            const url = document.getElementById('filterUrl').value.toLowerCase();
+            const userType = document.getElementById('filterUserType').value;
+
+            state.filteredData = state.processedData.filter(row => {
+                if (startDate && row.session_day < startDate) return false;
+                if (endDate && row.session_day > endDate) return false;
+                if (city && row.city !== city) return false;
+                if (url && !row.url.toLowerCase().includes(url)) return false;
+                if (userType === 'new' && row.is_returning_user) return false;
+                if (userType === 'returning' && !row.is_returning_user) return false;
+                return true;
+            });
+
+            state.currentPage = 1;
+            renderKPIs();
+            renderCharts();
+            renderTable();
+        }
+
+        function clearFilters() {
+            document.getElementById('filterStartDate').value = '';
+            document.getElementById('filterEndDate').value = '';
+            document.getElementById('filterCity').value = '';
+            document.getElementById('filterUrl').value = '';
+            document.getElementById('filterUserType').value = '';
+            
+            state.filteredData = [...state.processedData];
+            state.currentPage = 1;
+            
+            renderKPIs();
+            renderCharts();
+            renderTable();
+        }
+
+        // ========================================
+        // EXPORT FUNCTIONS
+        // ========================================
+        function exportCsv() {
+            const headers = ['visitor_id', 'city', 'url', 'session_started_at', 'last_heartbeat_at', 'session_duration', 'is_returning_user'];
+            const rows = state.filteredData.map(row => headers.map(h => row[h]));
+            const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+            downloadFile(csv, 'analytics_export.csv', 'text/csv');
+        }
+
+        function exportJson() {
+            const json = JSON.stringify(state.filteredData, null, 2);
+            downloadFile(json, 'analytics_export.json', 'application/json');
+        }
+
+        function downloadFile(content, filename, type) {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function printReport() {
+            window.print();
+        }
+
+        function copyTableToClipboard() {
+            const table = document.getElementById('dataTable');
+            const range = document.createRange();
+            range.selectNode(table);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            document.execCommand('copy');
+            window.getSelection().removeAllRanges();
+            showMessage('Table copied to clipboard', 'success');
+            setTimeout(hideMessage, 2000);
+        }
+
+        // ========================================
+        // POLLING (DB MODE ONLY)
+        // ========================================
+        function startPolling() {
+            if (state.mode !== 'db') return;
+            
+            stopPolling();
+            state.pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('http://localhost:8000/execute', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ query: 'SELECT * FROM siteanalysis ORDER BY session_started_at DESC LIMIT 50;' })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.result) {
+                            const { columns, rows } = data.result;
+                            const newData = rows.map(row => {
+                                const obj = {};
+                                columns.forEach((col, i) => {
+                                    obj[col] = row[i];
+                                });
+                                return obj;
+                            });
+                            
+                            // Check if data changed
+                            const newHash = JSON.stringify(newData);
+                            if (newHash !== state.lastDataHash) {
+                                state.lastDataHash = newHash;
+                                loadData(); // Refresh
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                }
+            }, 30000); // 30 seconds
+        }
+
+        function stopPolling() {
+            if (state.pollInterval) {
+                clearInterval(state.pollInterval);
+                state.pollInterval = null;
+            }
+        }
+
+        // ========================================
+        // UTILITY FUNCTIONS
+        // ========================================
+        function groupBy(array, key) {
+            return array.reduce((result, item) => {
+                const group = item[key];
+                if (!result[group]) result[group] = [];
+                result[group].push(item);
+                return result;
+            }, {});
+        }
+
+        function countBy(array, key) {
+            return array.reduce((result, item) => {
+                const group = item[key];
+                result[group] = (result[group] || 0) + 1;
+                return result;
+            }, {});
+        }
+
+        function truncate(str, len) {
+            return str.length > len ? str.substring(0, len) + '...' : str;
+        }
+
+        function formatDate(date) {
+            return new Date(date).toLocaleString();
+        }
+
+        function showLoader(show) {
+            document.getElementById('loader').classList.toggle('hidden', !show);
+        }
+
+        function showMessage(msg, type) {
+            const messages = document.getElementById('messages');
+            messages.innerHTML = `<div class="${type}">${msg}</div>`;
+        }
+
+        function hideMessage() {
+            document.getElementById('messages').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
