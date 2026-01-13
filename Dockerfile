@@ -51,11 +51,4 @@ RUN echo "Current directory: $(pwd)" && \
     pip list
 
 # Run the application with Gunicorn
-CMD ["gunicorn", 
-     "--bind", "0.0.0.0:8000", 
-     "--workers", "1", 
-     "--timeout", "120",
-     "--access-logfile", "-", 
-     "--error-logfile", "-", 
-     "--chdir", "/app", 
-     "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "--chdir", "/app", "app:app"]
