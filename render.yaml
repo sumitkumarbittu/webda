@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: webda
+    env: docker
+    plan: free
+    region: oregon
+    build:
+      dockerfile: Dockerfile
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: GUNICORN_CMD_ARGS
+        value: "--workers=1 --threads=4"
+      - key: PROCESS_INTERVAL_SECONDS
+        value: "60"
+      - key: CONTAINER_MAX
+        value: "10000"
+    # Make sure to set DATABASE_URL as an environment variable in Render dashboard
+    # after creating a PostgreSQL database
+    envVarUpdates:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: webda-db
+          property: connectionString
+
+databases:
+  - name: webda-db
+    plan: free
+    databaseName: webda
+    user: webda_user

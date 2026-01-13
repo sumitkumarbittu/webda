@@ -17,7 +17,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL environment variable is required")
 
-SITEANALYSIS_TABLE = "siteanalysis"
+SITEANALYSIS_TABLE = "siteanalytics"
 
 PROCESS_INTERVAL_SECONDS = int(os.environ.get("PROCESS_INTERVAL_SECONDS", "60"))
 CONTAINER_MAX = int(os.environ.get("CONTAINER_MAX", "10000"))
@@ -370,7 +370,11 @@ def _start_scheduler_once_per_process() -> None:
     _ensure_scheduler_started()
 '''
 
+# -----------------------------------------
+# Start APScheduler when Gunicorn imports app
+# -----------------------------------------
+_ensure_scheduler_started()
+
 if __name__ == "__main__":
-    _ensure_scheduler_started()
     port = int(os.environ.get("PORT", "8000"))
     app.run(host="0.0.0.0", port=port)
