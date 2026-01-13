@@ -1,3 +1,4 @@
+# Use Python 3.11 slim image for smaller size
 FROM python:3.11-slim
 
 # Set environment variables
@@ -15,8 +16,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory and user
-RUN useradd -m -s /bin/bash app
+# Create app user and set up directory structure
+RUN useradd -m -s /bin/bash app && \
+    mkdir -p /app/instance && \
+    chown -R app:app /app
+
 WORKDIR /app
 
 # Copy requirements first for better caching
@@ -30,9 +34,6 @@ COPY --chown=app:app . .
 
 # Switch to non-root user
 USER app
-
-# Create necessary directories
-RUN mkdir -p /app/instance
 
 # Health check with better error reporting
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
