@@ -1,9 +1,6 @@
 # Use Python 3.11 slim image for smaller size
 FROM python:3.11-slim
 
-# Set working directory
-WORKDIR /app
-
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -18,18 +15,25 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create app user and set up directory
+RUN useradd --create-home --shell /bin/bash app
+WORKDIR /home/app
+
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY --chown=app:app requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY app.py .
+COPY --chown=app:app . .
 
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash app && chown -R app:app /app
+# Switch to non-root user
 USER app
+
+# Create necessary directories and set permissions
+RUN mkdir -p /home/app/instance && \
+    chown -R app:app /home/app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
@@ -39,4 +43,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Run the application with Gunicorn
-CMD ["gunicorn","--bind","0.0.0.0:8000","--workers","1","--timeout","120","--access-logfile","-","--error-logfile","-","app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--timeout", "120", \
+     "--access-logfile", "-", "--error-logfile", "-", "--chdir", "/home/app", "app:app"]
