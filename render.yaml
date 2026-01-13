@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: webda
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+    healthCheckPath: /health

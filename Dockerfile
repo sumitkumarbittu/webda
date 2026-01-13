@@ -7,7 +7,6 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000 \
     PROCESS_INTERVAL_SECONDS=60 \
     CONTAINER_MAX=10000 \
     LOG_LEVEL=INFO
@@ -33,11 +32,10 @@ USER app
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+    CMD-SHELL python -c "import os,urllib.request; urllib.request.urlopen(f\"http://localhost:{os.environ.get('PORT','8000')}/health\")" || exit 1
 
 # Expose port
 EXPOSE 8000
 
 # Run the application with Gunicorn
-CMD ["gunicorn","--bind","0.0.0.0:8000","--workers","1","--timeout","120","--access-logfile","-","--error-logfile","-","app:app"]
-
+CMD ["sh","-c","gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --access-logfile - --error-logfile - app:app"]
