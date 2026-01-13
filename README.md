@@ -121,7 +121,7 @@ Paste this on your website. It will:
      ------------------------------ */
   const analytics_SESSION_RESET_AFTER = 90_000; // 90 seconds
 
-  const API_ENDPOINT = "https://webda.onrender.com/siteanalysis/enqueue"; // unchanged
+  const API_ENDPOINT = "https://tracksk.onrender.com/siteanalysis/enqueue"; // unchanged
   let analytics_HEARTBEAT_INTERVAL = 10_000; // 10 seconds
   let analytics_hidden_at = null;
 
