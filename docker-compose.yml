@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://username:password@postgres:5432/paydrive_analytics
+      - DATABASE_URL=postgresql://username:password@postgres:5432/webda
       - PORT=8000
       - PROCESS_INTERVAL_SECONDS=60
       - CONTAINER_MAX=10000
@@ -24,7 +24,7 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=paydrive_analytics
+      - POSTGRES_DB=webda
       - POSTGRES_USER=username
       - POSTGRES_PASSWORD=password
     volumes:
@@ -33,7 +33,7 @@ services:
       - "5432:5432"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U username -d paydrive_analytics"]
+      test: ["CMD-SHELL", "pg_isready -U username -d webda"]
       interval: 10s
       timeout: 5s
       retries: 5
